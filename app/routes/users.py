@@ -1,13 +1,16 @@
+from typing import List
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
-from sqlalchemy.orm import Session
+from pydantic import ValidationError
 from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.cache import get_redis_client, get_cache, set_cache, invalidate_cache
 from app.database import get_db
 from app.models.domain import Event, URL, User
 from app.models.schemas import UserCreate, UserOut, UserUpdate
-from typing import List
 from app.utils import parse_users_csv
-from pydantic import ValidationError
-from app.cache import get_redis_client, get_cache, set_cache, invalidate_cache
+
 
 router = APIRouter(prefix="/users", tags=["users"])
 

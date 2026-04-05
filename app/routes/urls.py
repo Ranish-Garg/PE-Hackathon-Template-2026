@@ -5,25 +5,15 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.domain import Event, URL, User
 from app.models.schemas import URLCreate, URLOut, URLUpdate
 from app.utils import generate_short_code
+from app.cache import get_redis_client, get_cache, set_cache, invalidate_cache
 
 
 router = APIRouter(prefix="/urls", tags=["urls"])
 
-from typing import List, Optional
-from app.cache import get_redis_client, get_cache, set_cache, invalidate_cache
-
-
-def _log_event(url_id: int, user_id: int, event_type: str, details: dict, engine=None):
-    """Background task: logs an event without blocking the response."""
-    if engine:
-        TaskSession = sessionmaker(bind=engine)
-        db = TaskSession()
-    else:
-        db = SessionLocal()
 
 def _log_event(
     url_id: int,
@@ -32,13 +22,14 @@ def _log_event(
     details: dict,
     session_factory: sessionmaker,
 ) -> None:
+    """Background task: logs an event without blocking the response."""
     db = session_factory()
     try:
         db.add(Event(url_id=url_id, user_id=user_id, event_type=event_type, details=details))
         db.commit()
-        invalidate_cache(get_redis_client(), "events:*")
     finally:
         db.close()
+
 
 
 def _schedule_event(
