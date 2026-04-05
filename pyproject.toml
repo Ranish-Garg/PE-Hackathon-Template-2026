@@ -8,6 +8,7 @@ dependencies = [
     "flask>=3.1",
     "orjson>=3.11.8",
     "peewee>=3.17",
+    "psutil>=6.1.0",
     "psycopg2-binary>=2.9",
     "pydantic[email]>=2.12.5",
     "python-dotenv>=1.0",
@@ -16,3 +17,14 @@ dependencies = [
     "sqlalchemy>=2.0.49",
     "uvicorn>=0.43.0",
 ]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=50"
+testpaths = ["tests"]

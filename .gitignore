@@ -12,6 +12,7 @@ build/
 
 # Environment variables
 .env
+logs/
 
 # uv
 uv.lock

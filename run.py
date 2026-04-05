@@ -1,13 +1,23 @@
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import ORJSONResponse
+import logging
+import time
+
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import JSONResponse
+from app import create_app
 from app.database import Base, engine, SessionLocal
 from app.routes import users, urls, events
 from app.models.domain import User, URL, Event
+from app.observability import get_system_metrics, read_recent_logs, setup_logging
 import csv
 import json
 
 app = FastAPI(title="Hackathon URL Shortener", default_response_class=ORJSONResponse)
+app = FastAPI(title="Hackathon URL Shortener")
+log_file_path = setup_logging()
+logger = logging.getLogger("app")
 
 Base.metadata.create_all(bind=engine)
 
@@ -16,10 +26,53 @@ app.include_router(urls.router)
 app.include_router(events.router)
 
 
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.info(
+            "HTTP request",
+            extra={
+                "component": "http",
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code if response else 500,
+                "duration_ms": duration_ms,
+                "client_ip": request.client.host if request.client else None,
+            },
+        )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unhandled exception",
+        extra={
+            "component": "http",
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+@app.get("/metrics", tags=["observability"])
+def metrics():
+    return get_system_metrics()
+
+
+@app.get("/logs", tags=["observability"])
+def logs(limit: int = Query(default=100, ge=1, le=1000)):
+    return {"items": read_recent_logs(log_file_path, limit=limit)}
 def seed_database():
     db = SessionLocal()
     if not db.query(User).first():
-        print("Seeding database...")
+        logger.info("Seeding database", extra={"component": "seed"})
         try:
             with open("seed_data/users.csv", "r") as f:
                 reader = csv.DictReader(f)
@@ -48,9 +101,15 @@ def seed_database():
             db.execute(text("SELECT setval('events_id_seq', (SELECT MAX(id) FROM events))"))
             db.commit()
             
-            print("Database seeded successfully.")
+            logger.info(
+                "Database seeded successfully",
+                extra={"component": "seed"},
+            )
         except Exception as e:
-            print(f"Error seeding database: {e}")
+            logger.exception(
+                "Database seeding failed",
+                extra={"component": "seed", "error": str(e)},
+            )
             db.rollback()
     db.close()
 
