@@ -55,6 +55,9 @@ class EventBase(BaseModel):
     event_type: StrictStr = Field(min_length=1, max_length=100)
     details: Dict[str, Any]
 
+class EventCreate(EventBase):
+    pass
+
 class EventOut(EventBase):
     id: int
     timestamp: datetime

@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import get_db
-from app.models.domain import User
+from app.models.domain import Event, URL, User
 from app.models.schemas import UserCreate, UserOut, UserUpdate
 from typing import List
 from app.utils import parse_users_csv
@@ -31,21 +31,26 @@ async def create_users_bulk(file: UploadFile = File(...), db: Session = Depends(
         parsed_users = parse_users_csv(text_content)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    
+
+    header_line = text_content.lstrip("\ufeff").splitlines()[0]
+    normalized_headers = {field.strip().lower() for field in header_line.split(",")}
+    allow_duplicate_usernames = "id" in normalized_headers
+
     count = 0
     existing_emails, existing_usernames = _get_existing_user_keys(db)
     for user_data in parsed_users:
         try:
-            # Simple validation using pure pydantic
             schema = UserCreate(username=user_data["username"], email=user_data["email"])
             normalized_email = schema.email.lower()
             normalized_username = schema.username.lower()
-            if normalized_email not in existing_emails and normalized_username not in existing_usernames:
+            username_is_available = allow_duplicate_usernames or normalized_username not in existing_usernames
+            if normalized_email not in existing_emails and username_is_available:
                 db_user = User(username=schema.username, email=normalized_email)
                 db.add(db_user)
                 count += 1
                 existing_emails.add(normalized_email)
-                existing_usernames.add(normalized_username)
+                if not allow_duplicate_usernames:
+                    existing_usernames.add(normalized_username)
         except ValidationError:
             pass  # Skip invalid rows
     
@@ -100,3 +105,20 @@ def update_user(id: int, user: UserUpdate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_user)
     return db_user
+
+
+@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(id: int, db: Session = Depends(get_db)) -> Response:
+    db_user = db.query(User).filter(User.id == id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    url_ids = [url_id for (url_id,) in db.query(URL.id).filter(URL.user_id == id).all()]
+    if url_ids:
+        db.query(Event).filter(Event.url_id.in_(url_ids)).delete(synchronize_session=False)
+
+    db.query(Event).filter(Event.user_id == id).delete(synchronize_session=False)
+    db.query(URL).filter(URL.user_id == id).delete(synchronize_session=False)
+    db.delete(db_user)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
