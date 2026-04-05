@@ -1,5 +1,5 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from app.database import get_db, SessionLocal
 from app.models.domain import URL, User, Event
 from app.models.schemas import URLCreate, URLOut, URLUpdate
@@ -7,9 +7,14 @@ from app.utils import generate_short_code
 from typing import List, Optional
 
 
-def _log_event(url_id: int, user_id: int, event_type: str, details: dict):
+def _log_event(url_id: int, user_id: int, event_type: str, details: dict, engine=None):
     """Background task: logs an event without blocking the response."""
-    db = SessionLocal()
+    if engine:
+        TaskSession = sessionmaker(bind=engine)
+        db = TaskSession()
+    else:
+        db = SessionLocal()
+
     try:
         db.add(Event(url_id=url_id, user_id=user_id, event_type=event_type, details=details))
         db.commit()
@@ -40,7 +45,8 @@ def create_url(url: URLCreate, background_tasks: BackgroundTasks, db: Session = 
     background_tasks.add_task(
         _log_event, url_id=db_url.id, user_id=url.user_id,
         event_type="created",
-        details={"short_code": short_code, "original_url": url.original_url}
+        details={"short_code": short_code, "original_url": url.original_url},
+        engine=db.get_bind()
     )
     
     return db_url
@@ -77,7 +83,8 @@ def update_url(id: int, url_update: URLUpdate, background_tasks: BackgroundTasks
     background_tasks.add_task(
         _log_event, url_id=db_url.id, user_id=db_url.user_id,
         event_type="updated",
-        details={"short_code": db_url.short_code, "original_url": db_url.original_url}
+        details={"short_code": db_url.short_code, "original_url": db_url.original_url},
+        engine=db.get_bind()
     )
     
     return db_url
