@@ -1,4 +1,6 @@
 import uvicorn
+from fastapi import FastAPI
+from fastapi.responses import ORJSONResponse
 import logging
 import time
 
@@ -12,6 +14,7 @@ from app.observability import get_system_metrics, read_recent_logs, setup_loggin
 import csv
 import json
 
+app = FastAPI(title="Hackathon URL Shortener", default_response_class=ORJSONResponse)
 app = FastAPI(title="Hackathon URL Shortener")
 log_file_path = setup_logging()
 logger = logging.getLogger("app")
@@ -113,4 +116,4 @@ def seed_database():
 seed_database()
 
 if __name__ == "__main__":
-    uvicorn.run("run:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("run:app", host="0.0.0.0", port=8000, workers=4)
