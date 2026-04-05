@@ -7,6 +7,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import Query, Request
 from fastapi.responses import JSONResponse
+import psutil
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -15,14 +16,39 @@ from app.database import Base, SessionLocal, engine
 from app.models.domain import Event, URL, User
 from app.observability import get_system_metrics, read_recent_logs, setup_logging
 
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    from prometheus_client import Gauge
+except ImportError:  # pragma: no cover - optional local dependency
+    Instrumentator = None
+    Gauge = None
+
 
 app = create_app()
 log_file_path = setup_logging()
 logger = logging.getLogger("app")
 
+cpu_usage_gauge = (
+    Gauge(
+        "process_cpu_usage_percent",
+        "Current CPU usage percentage of the host",
+    )
+    if Gauge is not None
+    else None
+)
+
+if Instrumentator is not None:
+    Instrumentator(
+        should_group_status_codes=False,
+        excluded_handlers=["/metrics", "/health"],
+    ).instrument(app).expose(app, include_in_schema=True, tags=["observability"])
+
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
+    if cpu_usage_gauge is not None:
+        cpu_usage_gauge.set(psutil.cpu_percent(interval=None))
+
     start = time.perf_counter()
     response = None
     try:
@@ -56,8 +82,8 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
-@app.get("/metrics", tags=["observability"])
-def metrics():
+@app.get("/metrics/json", tags=["observability"])
+def metrics_json():
     return get_system_metrics()
 
 
@@ -115,7 +141,6 @@ def seed_database() -> None:
                 )
         db.commit()
 
-        # Best-effort for Postgres sequences; harmless to skip on other engines.
         try:
             db.execute(text("SELECT setval('users_id_seq', (SELECT MAX(id) FROM users))"))
             db.execute(text("SELECT setval('urls_id_seq', (SELECT MAX(id) FROM urls))"))
@@ -141,7 +166,6 @@ def startup() -> None:
         Base.metadata.create_all(bind=engine)
         seed_database()
     except Exception as exc:
-        # Keep /health available even if the database is temporarily unavailable.
         logger.exception(
             "Startup database initialization failed",
             extra={"component": "startup", "error": str(exc)},

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session, sessionmaker
+from app.database import get_db, SessionLocal
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app.models.domain import URL, User, Event
@@ -7,6 +8,14 @@ from app.models.schemas import URLCreate, URLOut, URLUpdate
 from app.utils import generate_short_code
 from typing import List, Optional
 
+
+def _log_event(url_id: int, user_id: int, event_type: str, details: dict, engine=None):
+    """Background task: logs an event without blocking the response."""
+    if engine:
+        TaskSession = sessionmaker(bind=engine)
+        db = TaskSession()
+    else:
+        db = SessionLocal()
 
 def _log_event(
     url_id: int,
@@ -132,7 +141,7 @@ def update_url(id: int, url_update: URLUpdate, background_tasks: BackgroundTasks
         url_id=db_url.id,
         user_id=db_url.user_id,
         event_type="updated",
-        details={"short_code": db_url.short_code, "original_url": db_url.original_url},
+        details={"short_code": db_url.short_code, "original_url": str(db_url.original_url)},
     )
     
     return db_url
